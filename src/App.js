@@ -1,11 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './App.css';
 
-function Header({ isDarkMode, toggleDarkMode }) {
+const nodeBackendPort = 3001;
+const pyBackendPort = 5000;
+const nodeServer = "http://127.0.0.1:" + nodeBackendPort + "/";
+const pyServer = "http://127.0.0.1:" + pyBackendPort + "/";
+
+function Header({ isDarkMode, toggleDarkMode, activeChatName }) {
   return (
     <div className="header">
       <h2>ChatGPT</h2>
+      <h3>{activeChatName}</h3>
       <div className="mode-toggle">
         <label>
           <input type="checkbox" checked={isDarkMode} onChange={toggleDarkMode} />
@@ -16,25 +22,33 @@ function Header({ isDarkMode, toggleDarkMode }) {
   );
 }
 
-function Chat({ messages }) {
+function Chat({ messages, activeChat, setActiveChatMessages}) {
   const [message, setMessage] = useState('');
   const [response, setResponse] = useState('');
-  const [replyingTo, setReplyingTo] = useState(null);
 
-  const sendMessage = async () => {
+  const sendMessage = async (content, author="You") => {
     try {
-      const newMessage = { id: messages.length + 1, content: message, author: 'You' };
-      setResponse('');
+      const newMessage = { content: content, author: author };
+      const response = await axios.post(nodeServer + `sendMessage/${activeChat}`, newMessage);
+      setActiveChatMessages(prevMessages => [...prevMessages, newMessage]);
       setMessage('');
-      setReplyingTo(null);
-      messages.push(newMessage);
+      return response.data;
     } catch (error) {
-      console.error(error);
+      console.error('Error sending message: ', error);
+      throw error;
     }
   };
 
+  const generateResponse = async (content) => {
+    try {
+      const response = await axios.post(pyServer + 'generate', { text: content });
+      sendMessage(response.data.response, "Chat Bot");
+    } catch (error) {
+      console.error('Error generating response: ', error);
+    }
+  };
+  
   const handleReply = (replyMessage) => {
-    setReplyingTo(replyMessage);
     setMessage(`@${replyMessage.author}: ${replyMessage.content}`);
   };
 
@@ -42,12 +56,22 @@ function Chat({ messages }) {
     navigator.clipboard.writeText(text)
       .then(() => {
         console.log('Message copied to clipboard: ', text);
-        // You can show a success message or perform any other action here
       })
       .catch((err) => {
         console.error('Failed to copy message to clipboard: ', err);
-        // You can show an error message or perform any other action here
       });
+  };
+
+  const handleKeyDown = (event) => {
+    if (event.key === 'Enter' && message.trim() !== '') {
+      Promise.all([sendMessage(message), generateResponse(message)])
+        .then(([sendMessageResponse, otherFunctionResponse]) => {
+          // Handle responses if needed
+        })
+        .catch(error => {
+          console.error('Error sending message or calling other function: ', error);
+        });
+    }
   };
 
   return (
@@ -79,10 +103,19 @@ function Chat({ messages }) {
         type="text"
         value={message}
         onChange={(e) => setMessage(e.target.value)}
+        onKeyDown={handleKeyDown}
         placeholder="Type your message..."
         className="message-input"
       />
-      <button onClick={sendMessage} className="send-button">Send</button>
+      <button onClick={() => {
+          Promise.all([sendMessage(message), generateResponse(message)])
+            .then(([sendMessageResponse, otherFunctionResponse]) => {
+              // Handle responses if needed
+            })
+            .catch(error => {
+              console.error('Error sending message or calling other function: ', error);
+            });
+        }} className="send-button">Send</button>
     </div>
   );
 }
@@ -91,7 +124,6 @@ function ChatList({ chats, setActiveChat, handleCreateChat }) {
   const [menuOpen, setMenuOpen] = useState(null); // Track which menu is open
 
   const handleClick = (chatId) => {
-
     setActiveChat(chatId);
   };
 
@@ -99,16 +131,28 @@ function ChatList({ chats, setActiveChat, handleCreateChat }) {
     setMenuOpen(menuOpen === chatId ? null : chatId);
   };
 
-  const handleRename = (chatId) => {
+  const handleRename = async (chatId) => {
     const newName = prompt('Enter new name:');
     if (newName) {
-      // Update chat name
+      try {
+        await axios.put(nodeServer + `chats/${chatId}`, { newName });
+        alert('Chat name updated successfully');
+      } catch (error) {
+        console.error('Error updating chat name: ', error);
+        alert('Failed to update chat name');
+      }
     }
   };
 
-  const handleDelete = (chatId) => {
+  const handleDelete = async (chatId) => {
     if (window.confirm('Are you sure you want to delete this chat?')) {
-      // Delete chat
+      try {
+        await axios.delete(nodeServer + `chats/${chatId}`);
+        alert('Chat deleted successfully');
+      } catch (error) {
+        console.error('Error deleting chat: ', error);
+        alert('Failed to delete chat');
+      }
     }
   };
 
@@ -142,52 +186,71 @@ function ChatList({ chats, setActiveChat, handleCreateChat }) {
 
 function App() {
   const [activeChat, setActiveChat] = useState(null);
-  const [isDarkMode, setIsDarkMode] = useState(false); // Track dark mode state
+  const [isDarkMode, setIsDarkMode] = useState(false); 
 
-  // Function to toggle dark mode
+
   const toggleDarkMode = () => {
     setIsDarkMode(!isDarkMode);
-    // Here you can add logic to toggle between light and dark mode
-    // For example, you can update the class of the body element
     document.body.classList.toggle('dark-mode');
   };
-  const [chats, setChats] = useState([
-    { 
-      id: 1, 
-      name: 'Chat 1', 
-      messages: [
-        { id: 1, content: 'Hello!', author: 'You' },
-        { id: 2, content: 'How are you?', author: 'You' },
-        { id: 3, content: 'I am good, thank you!I am good, thank you!I am good, thank you!I am good, thank you!I am good, thank you!I am good, thank you!', author: 'Chat Bot' }
-      ] 
-    },
-    { 
-      id: 2, 
-      name: 'Chat 2', 
-      messages: [
-        { id: 1, content: 'Hi there!', author: 'You' },
-        { id: 2, content: 'This is Chat 2.', author: 'You' }
-      ] 
-    },
-    // Other chat objects...
-  ]);
 
-  function handleCreateChat() {
+  const [activeChatMessages, setActiveChatMessages] = useState([]);
+
+  useEffect(() => {
+    const fetchActiveChatMessages = async () => {
+      try {
+        const response = await axios.get(nodeServer + `chats/${activeChat}/messages`);
+        setActiveChatMessages(response.data);
+      } catch (error) {
+        console.error('Error fetching messages: ', error);
+      }
+    };
+
+    fetchActiveChatMessages();
+  }, [activeChat]);
+
+  const [chats, setChats] = useState([]);
+
+  useEffect(() => {
+    const fetchChats = async () => {
+      try {
+        const response = await axios.get(nodeServer + 'chats');
+        // Update the state using a callback function
+        setChats(prevChats => response.data);
+      } catch (error) {
+        console.error('Error fetching chats: ', error);
+      }
+    };
+  
+    fetchChats();
+  }, []);  
+
+  async function handleCreateChat() {
     const chatName = prompt('Enter chat name:');
     if (chatName) {
-      const newChatId = chats.length + 1;
-      setChats([...chats, { id: newChatId, name: chatName, messages: [] }]);
-      setActiveChat(newChatId);
+      try {
+        const response = await axios.post(nodeServer + 'createChat', { name: chatName });
+        const { chatId } = response.data;
+        setChats([...chats, { id: chatId, name: chatName, messages: [] }]);
+        setActiveChat(chatId);
+      } catch (error) {
+        console.error('Error creating chat room: ', error);
+      }
     }
   }
 
+  const getActiveChatName = () => {
+    const activeChatObj = chats.find(chat => chat.id === activeChat);
+    return activeChatObj ? activeChatObj.name : '';
+  };
+
   return (
     <div className={`App ${isDarkMode ? 'dark-mode' : ''}`}>
-      <Header isDarkMode={isDarkMode} toggleDarkMode={toggleDarkMode} />
+      <Header isDarkMode={isDarkMode} toggleDarkMode={toggleDarkMode} activeChatName={getActiveChatName()} />
       <ChatList chats={chats} setActiveChat={setActiveChat} handleCreateChat={handleCreateChat} />
       <div className="content">
         {activeChat && (
-          <Chat messages={chats.find(chat => chat.id === activeChat).messages} />
+          <Chat messages={activeChatMessages} activeChat={activeChat} setActiveChatMessages={setActiveChatMessages} />
         )}
       </div>
     </div>
